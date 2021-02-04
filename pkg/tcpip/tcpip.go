@@ -35,7 +35,6 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"gvisor.dev/gvisor/pkg/sync"
@@ -1219,12 +1218,22 @@ func (s *StatCounter) Decrement() {
 
 // Value returns the current value of the counter.
 func (s *StatCounter) Value() uint64 {
-	return atomic.LoadUint64(&s.count)
+	//return atomic.LoadUint64(&s.count)
+    //Read comments in IncrementBy
+    return s.count
 }
 
 // IncrementBy increments the counter by v.
 func (s *StatCounter) IncrementBy(v uint64) {
-	atomic.AddUint64(&s.count, v)
+	//atomic.AddUint64(&s.count, v)
+    //Android crashes on doing the atomic increment above, at least the
+    //android simulator (pixel_3a_API_30_x86) is crashing. It cant be alignment 
+    //issue because golang should align this to 8bytes. Not sure what it is, 
+    //needs more debugging. Nextensio doesnt really care about statistics from
+    //gvisor, hopefully/assuming the stats is only used for accounting purposes 
+    //and not any state machines etc.. (fingers crossed, need to read the code),
+    //I am just making this a regular increment
+    s.count += v
 }
 
 func (s *StatCounter) String() string {
