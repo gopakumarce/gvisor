@@ -389,6 +389,10 @@ type TCPSndBufState struct {
 
 	// SndMTU is the smallest MTU seen in the control packets received.
 	SndMTU int
+
+	// AutoTuneSndBufDisabled indicates that the auto tuning of send buffer
+	// is disabled.
+	AutoTuneSndBufDisabled bool
 }
 
 // TCPEndpointStateInner contains the members of TCPEndpointState used directly

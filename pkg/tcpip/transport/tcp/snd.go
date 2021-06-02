@@ -1322,6 +1322,7 @@ func (s *sender) handleRcvdSegment(rcvdSeg *segment) {
 		return
 	}
 
+	shouldUpdateSndBuf := false
 	// Ignore ack if it doesn't acknowledge any new data.
 	if (ack - 1).InRange(s.SndUna, s.SndNxt) {
 		s.DupAckCount = 0
@@ -1408,12 +1409,6 @@ func (s *sender) handleRcvdSegment(rcvdSeg *segment) {
 			ackLeft -= datalen
 		}
 
-		// Update the send buffer usage and notify potential waiters.
-		s.ep.updateSndBufferUsage(int(acked))
-
-		// Clear SACK information for all acked data.
-		s.ep.scoreboard.Delete(s.SndUna)
-
 		// If we are not in fast recovery then update the congestion
 		// window based on the number of acknowledged packets.
 		if !s.FastRecovery.Active {
@@ -1429,6 +1424,12 @@ func (s *sender) handleRcvdSegment(rcvdSeg *segment) {
 				s.reorderTimer.disable()
 			}
 		}
+
+		// Update the send buffer usage and notify potential waiters.
+		s.ep.updateSndBufferUsage(int(acked))
+
+		// Clear SACK information for all acked data.
+		s.ep.scoreboard.Delete(s.SndUna)
 
 		// It is possible for s.outstanding to drop below zero if we get
 		// a retransmit timeout, reset outstanding to zero but later
@@ -1448,6 +1449,8 @@ func (s *sender) handleRcvdSegment(rcvdSeg *segment) {
 			s.resendTimer.disable()
 			s.probeTimer.disable()
 		}
+
+		shouldUpdateSndBuf = true
 	}
 
 	if s.ep.SACKPermitted && s.ep.tcpRecovery&tcpip.TCPRACKLossDetection != 0 {
@@ -1491,6 +1494,12 @@ func (s *sender) handleRcvdSegment(rcvdSeg *segment) {
 	// to a duplicate ack during fast recovery. This will also re-enable
 	// the retransmit timer if needed.
 	s.sendData()
+
+	// Check if the incoming ACK has freed up some space and
+	// auto tune the send buffer size.
+	if shouldUpdateSndBuf {
+		s.ep.adjustTCPSendBufferSize()
+	}
 }
 
 // sendSegment sends the specified segment.

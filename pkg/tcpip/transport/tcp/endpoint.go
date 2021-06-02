@@ -1711,6 +1711,16 @@ func (e *endpoint) OnSetReceiveBufferSize(rcvBufSz, oldSz int64) (newSz int64) {
 	return rcvBufSz
 }
 
+// OnSetSendBufferSize implements tcpip.SocketOptionsHandler.OnSetSendBufferSize.
+func (e *endpoint) OnSetSendBufferSize(oldSz int64) (newSz int64) {
+	e.LockUser()
+	e.sndQueueInfo.sndQueueMu.Lock()
+	e.sndQueueInfo.TCPSndBufState.AutoTuneSndBufDisabled = true
+	e.sndQueueInfo.sndQueueMu.Unlock()
+	e.UnlockUser()
+	return oldSz
+}
+
 // SetSockOptInt sets a socket option.
 func (e *endpoint) SetSockOptInt(opt tcpip.SockOptInt, v int) tcpip.Error {
 	// Lower 2 bits represents ECN bits. RFC 3168, section 23.1
@@ -2323,6 +2333,8 @@ func (e *endpoint) connect(addr tcpip.FullAddress, handshake bool, run bool) tcp
 		e.segmentQueue.mu.Unlock()
 		e.snd.updateMaxPayloadSize(int(e.route.MTU()), 0)
 		e.setEndpointState(StateEstablished)
+		// Auto tune send buffer after entering established state.
+		e.adjustTCPSendBufferSize()
 	}
 
 	if run {
@@ -3076,5 +3088,33 @@ func GetTCPReceiveBufferLimits(s tcpip.StackHandler) tcpip.ReceiveBufferSizeOpti
 		Min:     ss.Min,
 		Default: ss.Default,
 		Max:     ss.Max,
+	}
+}
+
+// adjustTCPSendBufferSize implements auto tuning of send buffer size.
+func (e *endpoint) adjustTCPSendBufferSize() {
+	// Auto tuning is disabled when the user explicitly sets the send
+	// buffer size with SO_SNDBUF option.
+	e.sndQueueInfo.sndQueueMu.Lock()
+	disabled := e.sndQueueInfo.TCPSndBufState.AutoTuneSndBufDisabled
+	e.sndQueueInfo.sndQueueMu.Unlock()
+
+	if disabled {
+		return
+	}
+
+	curMSS := e.snd.MaxPayloadSize + header.TCPMinimumSize
+	numSeg := InitialCwnd
+	if numSeg < e.snd.SndCwnd {
+		numSeg = e.snd.SndCwnd
+	}
+
+	sndmem := int64(numSeg * curMSS * tcpip.PacketOverheadFactor)
+	if ss := GetTCPSendBufferLimits(e.stack); int64(ss.Max) < sndmem {
+		sndmem = int64(ss.Max)
+	}
+
+	if sndbuf := e.ops.GetSendBufferSize(); sndbuf < sndmem {
+		e.ops.SetSendBufferSize(sndmem, false /* notify */)
 	}
 }
